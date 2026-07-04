@@ -30,6 +30,10 @@ _NON_JOB_LINK_PATTERNS = [
     "unsubscribe", "/preferences", "/settings", "privacy", "view-in-browser",
     "mailto:", "helpcenter", "support.", "/optout", "manage-notification",
     "manage-alert", "email-settings",
+    # LinkedIn's own header "you have notifications" badge link — confirmed
+    # by a real user report that this was being picked as the job link,
+    # landing on the generic feed instead of any specific posting.
+    "linkedin.com/comm/feed", "linkedin.com/feed", "home_glimmer_static_badging",
 ]
 
 
@@ -95,6 +99,13 @@ def _linkedin_body_location(html_body, company):
 
 
 def linkedin_subject(source_name, default_confidence, subject, sender, html_body):
+    # Link extraction: requires a job-specific path ("/jobs/"), not just the
+    # linkedin.com domain. A real user report caught this failing — the
+    # bare domain match was grabbing LinkedIn's own header notification-badge
+    # link (which sits first in the email, before any job link) and sending
+    # people to their generic feed instead of the actual posting. That badge
+    # link is also now in _NON_JOB_LINK_PATTERNS as a second layer of defense.
+    #
     # LinkedIn's "your job alert has been created" confirmation email is NOT
     # empty — it bundles an initial batch of matching postings directly in
     # the body (confirmed against a real example: 6 real Verizon postings
@@ -119,7 +130,7 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
         rec["company"] = m.group(2).strip()
         rec["title"] = m.group(3).strip()
         rec["location"] = _linkedin_body_location(html_body, rec["company"])
-        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com"])
+        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com/comm/jobs", "linkedin.com/jobs"])
         return [rec]
 
     # Pattern B: Title at Company: up to $X/year   OR   Title at Company
@@ -129,7 +140,7 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
         rec["title"] = m.group(1).strip()
         rec["company"] = m.group(2).strip()
         rec["location"] = _linkedin_body_location(html_body, rec["company"])
-        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com"])
+        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com/comm/jobs", "linkedin.com/jobs"])
         return [rec]
 
     # Pattern C: "search term" and similar jobs — LinkedIn's algorithmic
@@ -141,7 +152,7 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
     if m:
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["company"] = f'(matched search: "{m.group(1).strip()}")'
-        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com"])
+        rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com/comm/jobs", "linkedin.com/jobs"])
         return [rec]
 
     # Unrecognized subject shape — don't guess.
@@ -332,14 +343,24 @@ def ziprecruiter_digest_body(source_name, subject, html_body):
         a for a in soup.find_all("a", href=True)
         if ("ziprecruiter.com/km/" in a["href"] or "ziprecruiter.com/ekm/" in a["href"])
     ]
+    # "Apply Now" / "View Details" are button links reusing the same href
+    # as the title link for that job — skip those. Also seen in a live run:
+    # footer/nav boilerplate ("View More Jobs", "Privacy Policy",
+    # "Unsubscribe") apparently sits on the same ziprecruiter.com/km/ or
+    # /ekm/ URL pattern as real job links, which let three fake postings
+    # through with garbage companies ("Phil", "|", blank). Excluded by text
+    # match rather than URL, since the URL pattern alone can't tell them
+    # apart from a real posting.
+    _NON_JOB_LINK_TEXT = (
+        "apply now", "view details", "view more jobs", "privacy policy",
+        "unsubscribe", "terms of service", "terms of use", "help center",
+    )
     seen_hrefs = set()
     records = []
     for a in title_links:
         text = a.get_text(strip=True)
         href = a["href"]
-        # "Apply Now" / "View Details" are the button links reusing the same
-        # href as the title link for that job — skip the button, keep the title
-        if not text or text.lower() in ("apply now", "view details") or href in seen_hrefs:
+        if not text or text.lower() in _NON_JOB_LINK_TEXT or text == "|" or href in seen_hrefs:
             continue
         try:
             idx = lines.index(text)
@@ -401,10 +422,14 @@ def ziprecruiter_subject(source_name, default_confidence, subject, sender, html_
 
 def lensa_body(source_name, default_confidence, subject, sender, html_body):
     """Lensa emails list multiple postings in the HTML body, each wrapped as
-    one large clickable block: company name, then job title, then salary,
-    then location, all as text inside a single <a> tag whose href points
-    through Lensa's own click-tracking redirect
-    (sg3email.lensa.com/ls/click?...) rather than a direct job URL.
+    one large clickable block: company name, then job title, then salary
+    and a list of benefit badges (e.g. "401K Plan", "Health Insurance"),
+    all as text inside a single <a> tag whose href points through Lensa's
+    own click-tracking redirect (sg3email.lensa.com/ls/click?...) rather
+    than a direct job URL. An earlier assumption that the final line was
+    location was tested against a live run and disproven — it's reliably
+    a benefit badge, not a place — so location isn't extracted here at all
+    until a raw sample clarifies whether/where it actually appears.
 
     Confirmed against a real Lensa email — the original assumption (looking
     for '/job/' or '/l/' in the link) was wrong and matched nothing, which
@@ -432,12 +457,15 @@ def lensa_body(source_name, default_confidence, subject, sender, html_body):
         # confirmed by decoding a real sample. Strip both to be safe.
         rec["company"] = lines[0].rstrip("\u2022\u2024").strip()
         rec["title"] = lines[1]
-        # Confirmed real structure is company/title/salary/location, but
-        # salary isn't always present, which would shift location's index.
-        # Taking the last line is safer than assuming a fixed position —
-        # location is reliably the final element either way, when present.
-        if len(lines) >= 3:
-            rec["location"] = lines[-1].strip()
+        # Location extraction was tried here (taking the last line, on the
+        # theory it's reliably location whether or not salary is present)
+        # and a live run proved it wrong: the last line is consistently a
+        # benefit/perk badge instead — "401K Plan", "Health Insurance",
+        # "Remote", "Full-Time", etc., not a place. A confidently wrong
+        # location is worse than an honest blank, so this isn't attempted
+        # until a real raw Lensa email can be inspected to find where
+        # location actually sits in the card (if it's even present at all —
+        # it may simply not be, for cards that show a benefits list instead).
         rec["link"] = a["href"]
         records.append(rec)
     if not records:
