@@ -120,14 +120,14 @@ EMAIL_SOURCES = [
         "match": ["nbcunicareers.com", "nbcuniversal.com"],
         "parser": "flag_only",
         "confidence": Confidence.MANUAL_CHECK,
-        "notes": "Email notification only — the reliable path for NBCU is the SmartRecruiters API fetch below, not this email.",
+        "notes": "Email notification only. Company-wide SmartRecruiters crawl was removed — no real NBCU alert email has been seen yet to build a proper per-posting lookup from.",
     },
     {
         "name": "Verizon (email)",
         "match": ["verizon.com", "mycareer.verizon.com"],
         "parser": "flag_only",
         "confidence": Confidence.MANUAL_CHECK,
-        "notes": "Email notification only — the reliable path for Verizon is the Workday API fetch below, not this email.",
+        "notes": "Email notification only. Company-wide Workday crawl was removed — no real Verizon alert email has been seen yet to build a proper per-posting lookup from.",
     },
     {
         "name": "Fubo",
@@ -141,7 +141,7 @@ EMAIL_SOURCES = [
         "match": ["echostar.com"],
         "parser": "flag_only",
         "confidence": Confidence.MANUAL_CHECK,
-        "notes": "Email notification only — reliable path is the Workday API fetch below.",
+        "notes": "Email notification only. No real EchoStar alert email seen yet — also runs on Jibe (dish.jibeapply.com), not Workday, so a lookup fetcher would need to be purpose-built once a sample exists.",
     },
     {
         "name": "Google Careers",
@@ -154,7 +154,18 @@ EMAIL_SOURCES = [
 
 
 # ---------------------------------------------------------------------------
-# ATS SOURCES — fetched directly, independent of email, on every run
+# ATS SOURCES — NOT currently called anywhere in the pipeline.
+#
+# These configs are dormant. The company-wide crawl this used to power (via
+# ats_fetchers.run_all_ats_fetchers) was removed from main.py: it was pulling
+# every open req across the whole company, unrelated to any actual alert
+# email, which was never the intended behavior. The real requirement is
+# per-posting lookup — triggered by a specific job link inside a real
+# Verizon/PBS/NBCU/EchoStar alert email, used only when that email's own
+# parser can't get full detail. None of those four sources has a real sample
+# email yet, so there's nothing to build the lookup from. These entries stay
+# here (tenant/host/company_id already confirmed reachable) for when that
+# work happens, rather than being deleted and re-discovered later.
 # ---------------------------------------------------------------------------
 ATS_SOURCES = [
     {

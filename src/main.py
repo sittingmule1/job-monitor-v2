@@ -4,10 +4,13 @@ main.py
 Entry point. Pipeline:
   1. Pull new emails under the Job Alerts label
   2. Route each to its parser based on sender
-  3. Fetch ATS sources directly (independent of email)
-  4. Dedupe everything together
-  5. Score + render digest
-  6. Write to docs/index.html for GitHub Pages
+  3. Dedupe everything together
+  4. Score + render digest
+  5. Write to docs/index.html for GitHub Pages
+
+No standalone ATS crawl — Verizon/PBS/NBCU/EchoStar are email-driven sources
+like everything else; a per-posting lookup (not a company-wide pull) is the
+planned addition once a real sample email exists for one of them.
 """
 
 import os
@@ -15,9 +18,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from src.sources import EMAIL_SOURCES, ATS_SOURCES
+from src.sources import EMAIL_SOURCES
 from src.parsers import PARSER_REGISTRY
-from src.ats_fetchers import run_all_ats_fetchers
 from src.dedupe import dedupe_and_mark
 from src.digest import render
 from src.gmail_client import fetch_new_messages
@@ -58,10 +60,10 @@ def run():
         records = parser(src["name"], src["confidence"], email["subject"], email["sender"], email["html_body"])
         all_records.extend(records)
 
-    print("Fetching ATS sources directly (Verizon, PBS, EchoStar, NBCUniversal)...")
-    ats_records = run_all_ats_fetchers(ATS_SOURCES)
-    print(f"  {len(ats_records)} postings from direct ATS fetch")
-    all_records.extend(ats_records)
+    # No company-wide ATS crawl. Verizon/PBS/NBCU/EchoStar have no real
+    # email samples yet — per-posting lookup (triggered by a specific job
+    # link inside an actual alert email) will replace this once we have one
+    # to build the parser from. Until then these sources stay untouched.
 
     print("Deduplicating...")
     new_records, merged_records = dedupe_and_mark(all_records)

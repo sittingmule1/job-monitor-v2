@@ -71,6 +71,29 @@ def _base_record(source_name, confidence, subject):
     }
 
 
+def _linkedin_body_location(html_body, company):
+    """Best-effort: the subject line never carries location — it's always in
+    the body, specific to that one job. Reuses the 'Company · Location'
+    middle-dot line pattern already confirmed for LinkedIn's digest-body
+    format (see _parse_linkedin_digest_body), on the assumption LinkedIn
+    renders job cards the same way across its email types. That specific
+    reuse hasn't been checked against a real Pattern A/B sample yet, so
+    treat any location this returns as worth a spot-check, not a guarantee.
+    Matches loosely (company name as a substring) since the body's company
+    text may include a suffix (e.g. "Netflix, Inc.") the subject doesn't."""
+    if not html_body or not company:
+        return None
+    soup = BeautifulSoup(html_body, "html.parser")
+    text = soup.get_text(separator="\n")
+    company_lower = company.strip().lower()
+    for line in text.split("\n"):
+        line = line.strip()
+        m = re.match(r'^(.+?)\s*\u00b7\s*(.+)$', line)
+        if m and company_lower in m.group(1).strip().lower():
+            return m.group(2).strip()
+    return None
+
+
 def linkedin_subject(source_name, default_confidence, subject, sender, html_body):
     # LinkedIn's "your job alert has been created" confirmation email is NOT
     # empty — it bundles an initial batch of matching postings directly in
@@ -95,6 +118,7 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
         rec = _base_record(source_name, default_confidence, subject)
         rec["company"] = m.group(2).strip()
         rec["title"] = m.group(3).strip()
+        rec["location"] = _linkedin_body_location(html_body, rec["company"])
         rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com"])
         return [rec]
 
@@ -104,6 +128,7 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = m.group(1).strip()
         rec["company"] = m.group(2).strip()
+        rec["location"] = _linkedin_body_location(html_body, rec["company"])
         rec["link"] = _first_job_link(html_body, must_contain=["linkedin.com"])
         return [rec]
 
