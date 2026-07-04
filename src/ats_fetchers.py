@@ -42,7 +42,7 @@ def _smartrecruiters_location(posting):
     return ", ".join(p for p in parts if p)
 
 
-def fetch_workday(source, max_results=1000, page_size=50, max_pages=25):
+def fetch_workday(source, max_results=1000, page_size=20, max_pages=50):
     """
     Workday exposes a JSON search endpoint at:
       https://{host}/wday/cxs/{tenant}/{site}/jobs
@@ -75,7 +75,8 @@ def fetch_workday(source, max_results=1000, page_size=50, max_pages=25):
             resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
                 print(f"    [{source['name']}] Workday returned HTTP {resp.status_code} — "
-                      f"likely wrong tenant/site slug, not a real 'no jobs' result")
+                      f"likely wrong tenant/site slug, not a real 'no jobs' result "
+                      f"(body: {resp.text[:200]!r})")
                 break
             data = resp.json()
             postings = data.get("jobPostings", [])
