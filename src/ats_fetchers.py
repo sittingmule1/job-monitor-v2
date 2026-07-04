@@ -136,6 +136,16 @@ def run_all_ats_fetchers(ats_sources):
     for source in ats_sources:
         fetcher = FETCHER_REGISTRY.get(source["platform"])
         if not fetcher:
+            print(f"  [{source['name']}] no fetcher registered for platform '{source['platform']}' — skipped")
             continue
-        all_results.extend(fetcher(source))
+        results = fetcher(source)
+        error_count = sum(1 for r in results if r["confidence"] == Confidence.MANUAL_CHECK)
+        hit_count = len(results) - error_count
+        if error_count and not hit_count:
+            print(f"  [{source['name']}] FETCH ERROR — degraded to manual-check flag")
+        elif hit_count == 0:
+            print(f"  [{source['name']}] fetch succeeded but matched 0 keywords — verify this is real, not a silent field-name mismatch")
+        else:
+            print(f"  [{source['name']}] {hit_count} keyword matches")
+        all_results.extend(results)
     return all_results

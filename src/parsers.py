@@ -36,8 +36,15 @@ def _base_record(source_name, confidence, subject):
 
 
 def linkedin_subject(source_name, default_confidence, subject, sender, html_body):
+    # Real LinkedIn alert emails use curly/smart quotes ("..."), not straight
+    # ASCII quotes ("..."). The original regex only matched straight quotes,
+    # which silently sent every quoted-search-term alert — the exact format
+    # meant to be VERIFIED-tier — to the unparsed fallback instead. Normalize
+    # before matching rather than trying to maintain two character classes.
+    normalized = subject.replace("\u201c", '"').replace("\u201d", '"')
+
     # Pattern A: "search term": Company - Title posted on date
-    m = re.match(r'^"(.+?)":\s*(.+?)\s*-\s*(.+?)\s*posted on', subject)
+    m = re.match(r'^"(.+?)":\s*(.+?)\s*-\s*(.+?)\s*posted on', normalized)
     if m:
         rec = _base_record(source_name, default_confidence, subject)
         rec["company"] = m.group(2).strip()
@@ -45,11 +52,22 @@ def linkedin_subject(source_name, default_confidence, subject, sender, html_body
         return [rec]
 
     # Pattern B: Title at Company: up to $X/year   OR   Title at Company
-    m = re.match(r'^(.+?)\s+at\s+(.+?)(?:[:,]|$)', subject)
+    m = re.match(r'^(.+?)\s+at\s+(.+?)(?:[:,]|$)', normalized)
     if m:
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = m.group(1).strip()
         rec["company"] = m.group(2).strip()
+        return [rec]
+
+    # Pattern C: "search term" and similar jobs — LinkedIn's algorithmic
+    # recommendation format for a batched/company-name saved search. No
+    # title/company to extract, but the search term itself is useful signal
+    # (tells you which of your searches triggered it), so surface it as the
+    # company field rather than leaving everything blank.
+    m = re.match(r'^"(.+?)"\s+and similar jobs', normalized)
+    if m:
+        rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
+        rec["company"] = f'(matched search: "{m.group(1).strip()}")'
         return [rec]
 
     # Unrecognized subject shape — don't guess.
@@ -134,6 +152,7 @@ def agency_body(source_name, default_confidence, subject, sender, html_body):
     for c in companies:
         rec = _base_record(source_name, default_confidence, subject)
         rec["company"] = c
+        rec["title"] = "(agency digest — no job title in email, click through to see roles)"
         records.append(rec)
     return records
 
