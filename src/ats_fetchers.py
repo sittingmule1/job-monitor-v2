@@ -12,28 +12,47 @@ flag for that company rather than crashing the whole run.
 
 import requests
 from src.sources import Confidence
-from src.keywords import KEYWORDS
 
 REQUEST_TIMEOUT = 15
 
+# No keyword gate here. Every posting a source returns reaches the digest —
+# scoring.py handles relevance ordering (including PRIORITY_COMPANIES and
+# KEYWORDS), it does not decide what's visible. See scoring.py docstring:
+# "This does NOT filter anything out." Filtering here would silently drop
+# real postings whose titles are worded differently than KEYWORDS expects,
+# with no error and no manual-check flag — indistinguishable from "no jobs
+# today." That happened in practice: PBS and NBCU postings were being
+# dropped by a per-posting keyword check even though both are on
+# PRIORITY_COMPANIES and were never meant to be filtered at all.
 
-def _keyword_hit(text):
-    text = (text or "").lower()
-    return any(k in text for k in KEYWORDS)
+
+def _workday_location(posting):
+    # Workday's cxs jobPostings items commonly expose a "locationsText" field
+    # (e.g. "Ashburn, VA" or "Multiple Locations"). Unverified against a live
+    # response for these specific tenants — check the next run's digest to
+    # confirm this populates rather than coming back empty.
+    return posting.get("locationsText") or ""
 
 
-def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
+def _smartrecruiters_location(posting):
+    # SmartRecruiters' public postings API returns a "location" object with
+    # city/region/country fields (all optional/nullable per their docs).
+    loc = posting.get("location") or {}
+    parts = [loc.get("city"), loc.get("region"), loc.get("country")]
+    return ", ".join(p for p in parts if p)
+
+
+def fetch_workday(source, max_results=1000, page_size=50, max_pages=25):
     """
     Workday exposes a JSON search endpoint at:
       https://{host}/wday/cxs/{tenant}/{site}/jobs
     via POST with a search text + pagination body. This is the same
     endpoint the public career-site search box calls in the browser.
 
-    Rather than issuing one request per keyword (14 keywords x N Workday
-    companies = a lot of chatty, redundant requests for the same posting
-    set), pull with an empty searchText — which returns the full open-req
-    list — paginated, and filter client-side against KEYWORDS. One posting
-    list per company instead of one per keyword.
+    Pull with an empty searchText — which returns the full open-req list —
+    paginated across all pages. No client-side keyword filtering: every
+    posting the company has open is returned as-is; scoring.py decides
+    display order, not this fetcher.
     """
     host = source["host"]
     tenant = source["tenant"]
@@ -65,11 +84,10 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
                 break
             for posting in postings:
                 title = posting.get("title", "")
-                if not _keyword_hit(title):
-                    continue
                 results.append({
                     "title": title,
                     "company": source["name"],
+                    "location": _workday_location(posting),
                     "link": f"https://{host}/{tenant}/{site}{posting.get('externalPath', '')}",
                     "source": f"{source['name']} (Workday, direct)",
                     "confidence": Confidence.VERIFIED,
@@ -91,15 +109,15 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
         }]
 
     if raw_total_seen == 0:
-        print(f"    [{source['name']}] saw 0 total postings (not just 0 keyword matches) — "
+        print(f"    [{source['name']}] saw 0 total postings — "
               f"this strongly suggests the tenant/site URL is wrong, not that the company has zero openings")
     else:
-        print(f"    [{source['name']}] saw {raw_total_seen} total open postings, {len(results)} matched keywords")
+        print(f"    [{source['name']}] saw {raw_total_seen} total open postings, all included (no keyword filter)")
 
     return results[:max_results]
 
 
-def fetch_smartrecruiters(source, max_results=50, page_size=100, max_pages=10):
+def fetch_smartrecruiters(source, max_results=1000, page_size=100, max_pages=10):
     """
     SmartRecruiters has a genuinely public, documented posting API:
       https://api.smartrecruiters.com/v1/companies/{companyId}/postings
@@ -107,9 +125,9 @@ def fetch_smartrecruiters(source, max_results=50, page_size=100, max_pages=10):
 
     Paginated rather than a single request — a company the size of
     NBCUniversal almost certainly has more open postings than fit in one
-    page, and only checking page 1 risks missing a real keyword match that
-    happens to sit further down the list. Better to check everything once
-    than to falsely report "0 matches" from an incomplete view.
+    page, and only checking page 1 would silently miss real postings further
+    down the list. No client-side keyword filtering: every posting returned
+    by the API reaches the digest as-is.
     """
     company_id = source["company_id"]
     url = f"https://api.smartrecruiters.com/v1/companies/{company_id}/postings"
@@ -131,11 +149,10 @@ def fetch_smartrecruiters(source, max_results=50, page_size=100, max_pages=10):
                 break
             for posting in postings:
                 title = posting.get("name", "")
-                if not _keyword_hit(title):
-                    continue
                 results.append({
                     "title": title,
                     "company": source["name"],
+                    "location": _smartrecruiters_location(posting),
                     "link": posting.get("ref") or posting.get("applyUrl", ""),
                     "source": f"{source['name']} (SmartRecruiters, direct)",
                     "confidence": Confidence.VERIFIED,
@@ -147,10 +164,10 @@ def fetch_smartrecruiters(source, max_results=50, page_size=100, max_pages=10):
                 break
 
         if raw_total_seen == 0:
-            print(f"    [{source['name']}] saw 0 total postings (not just 0 keyword matches) — "
+            print(f"    [{source['name']}] saw 0 total postings — "
                   f"this strongly suggests the company ID is wrong, not that the company has zero openings")
         else:
-            print(f"    [{source['name']}] saw {raw_total_seen} total open postings (all pages), {len(results)} matched keywords")
+            print(f"    [{source['name']}] saw {raw_total_seen} total open postings (all pages), all included (no keyword filter)")
     except Exception as e:
         return [{
             "title": f"(fetch failed — check {source['name']} careers site directly: {e})",
@@ -182,8 +199,8 @@ def run_all_ats_fetchers(ats_sources):
         if error_count and not hit_count:
             print(f"  [{source['name']}] FETCH ERROR — degraded to manual-check flag")
         elif hit_count == 0:
-            print(f"  [{source['name']}] fetch succeeded but matched 0 keywords — verify this is real, not a silent field-name mismatch")
+            print(f"  [{source['name']}] fetch succeeded but returned 0 postings — verify this is real, not a silent field-name mismatch")
         else:
-            print(f"  [{source['name']}] {hit_count} keyword matches")
+            print(f"  [{source['name']}] {hit_count} postings (unfiltered)")
         all_results.extend(results)
     return all_results

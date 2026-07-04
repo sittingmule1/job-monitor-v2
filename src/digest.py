@@ -49,6 +49,7 @@ def render(all_records, new_only_count):
         for r in recs:
             title = r.get("title") or "(no title extracted)"
             company = r.get("company") or ""
+            location = r.get("location") or "—"
             link = r.get("link") or ""
             sources = ", ".join(sorted(set(r.get("sources", [r.get("source", "")]))))
             new_badge = '<span class="new-badge">NEW</span>' if r.get("is_new") else ""
@@ -57,6 +58,7 @@ def render(all_records, new_only_count):
                 <tr>
                     <td>{new_badge}{title_html}</td>
                     <td>{company}</td>
+                    <td>{location}</td>
                     <td class="src">{sources}</td>
                 </tr>""")
         sections_html.append(f"""
@@ -64,7 +66,7 @@ def render(all_records, new_only_count):
             <h2>{meta['label']} <span class="count">({len(recs)})</span></h2>
             <p class="tier-desc">{meta['desc']}</p>
             <table>
-                <thead><tr><th>Title</th><th>Company</th><th>Source(s)</th></tr></thead>
+                <thead><tr><th>Title</th><th>Company</th><th>Location</th><th>Source(s)</th></tr></thead>
                 <tbody>{''.join(rows)}</tbody>
             </table>
         </section>""")

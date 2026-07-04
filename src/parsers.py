@@ -63,6 +63,7 @@ def _base_record(source_name, confidence, subject):
     return {
         "title": None,
         "company": None,
+        "location": None,
         "link": None,
         "source": source_name,
         "confidence": confidence,
@@ -156,6 +157,7 @@ def _parse_linkedin_digest_body(source_name, subject, html_body):
             if m and i > 0:
                 rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
                 rec["company"] = m.group(1).strip()
+                rec["location"] = m.group(2).strip()
                 rec["title"] = lines[i - 1].strip()
                 rec["link"] = a["href"]
                 records.append(rec)
@@ -179,6 +181,7 @@ def _parse_linkedin_digest_body(source_name, subject, html_body):
         if m and i > 0:
             rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
             rec["company"] = m.group(1).strip()
+            rec["location"] = m.group(2).strip()
             rec["title"] = lines[i - 1].strip()
             records.append(rec)
     if not records:
@@ -237,10 +240,14 @@ def _parse_linkedin_search_results_body(source_name, subject, html_body):
         collected.reverse()
         if len(collected) < 2:
             continue  # not enough context to trust a guess
-        title, company = (collected[0], collected[1]) if len(collected) >= 3 else (None, collected[0])
+        if len(collected) >= 3:
+            title, company, location = collected[0], collected[1], collected[2]
+        else:
+            title, company, location = None, collected[0], None
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = title
         rec["company"] = company
+        rec["location"] = location
         rec["link"] = a["href"]
         records.append(rec)
     return records if records else None
@@ -268,6 +275,12 @@ def indeed_subject(source_name, default_confidence, subject, sender, html_body):
         rec = _base_record(source_name, default_confidence, subject)
         rec["title"] = m.group(1).strip()
         rec["company"] = m.group(2).strip()
+        # Location, when present, trails as "... N more X job(s) in Location" —
+        # searched separately (not required for the match above) since not
+        # every real subject of this shape necessarily ends with it.
+        loc_m = re.search(r'\bjobs?\s+in\s+(.+)$', subject, re.IGNORECASE)
+        if loc_m:
+            rec["location"] = loc_m.group(1).strip()
         rec["link"] = _first_job_link(html_body, must_contain=["/rc/clk"])
         return [rec]
 
@@ -308,10 +321,12 @@ def ziprecruiter_digest_body(source_name, subject, html_body):
         except ValueError:
             continue  # title text didn't match a line exactly (e.g. truncated with "...") — skip rather than guess
         company = None
+        location = None
         for j in range(idx + 1, min(idx + 4, len(lines))):
             m = re.match(r'^(.+?)\s*\u2022\s*(.+)$', lines[j])
             if m:
                 company = m.group(1).strip()
+                location = m.group(2).strip()
                 break
         if company is None and idx + 1 < len(lines):
             # No "Company • Location" bullet pattern found nearby — confirmed
@@ -323,6 +338,7 @@ def ziprecruiter_digest_body(source_name, subject, html_body):
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = text
         rec["company"] = company
+        rec["location"] = location
         rec["link"] = href
         records.append(rec)
         seen_hrefs.add(href)
@@ -343,6 +359,7 @@ def ziprecruiter_subject(source_name, default_confidence, subject, sender, html_
     if m:
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)  # location in title, no company
         rec["title"] = m.group(1).strip()
+        rec["location"] = m.group(2).strip()
         rec["link"] = _first_job_link(html_body, must_contain=["ziprecruiter.com"])
         return [rec]
     # Pattern B: "Company has a Title opening now"
@@ -390,6 +407,12 @@ def lensa_body(source_name, default_confidence, subject, sender, html_body):
         # confirmed by decoding a real sample. Strip both to be safe.
         rec["company"] = lines[0].rstrip("\u2022\u2024").strip()
         rec["title"] = lines[1]
+        # Confirmed real structure is company/title/salary/location, but
+        # salary isn't always present, which would shift location's index.
+        # Taking the last line is safer than assuming a fixed position —
+        # location is reliably the final element either way, when present.
+        if len(lines) >= 3:
+            rec["location"] = lines[-1].strip()
         rec["link"] = a["href"]
         records.append(rec)
     if not records:
@@ -511,6 +534,7 @@ def paramount_body(source_name, default_confidence, subject, sender, html_body):
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = title
         rec["company"] = source_name
+        rec["location"] = parts[1].strip() if len(parts) > 1 else None
         rec["link"] = href
         records.append(rec)
     if not records:
@@ -617,6 +641,11 @@ def wbd_body(source_name, default_confidence, subject, sender, html_body):
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
         rec["title"] = text
         rec["company"] = source_name
+        # TODO: docstring above says a real confirmed sample had "title +
+        # location" per posting, but location's actual position relative to
+        # the title line was never captured in this parser. Needs a fresh
+        # real WBD email to confirm the structure before guessing at it —
+        # left blank rather than assuming a line offset that might be wrong.
         rec["link"] = href
         records.append(rec)
         seen_hrefs.add(href)
