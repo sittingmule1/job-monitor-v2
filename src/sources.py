@@ -168,7 +168,7 @@ ATS_SOURCES = [
     {
         "name": "PBS",
         "platform": "workday",
-        "tenant": "vhr-pbs",
+        "tenant": "vhr_pbs",
         "site": "PBSCareers",
         "host": "vhr-pbs.wd115.myworkdayjobs.com",
         "confidence": Confidence.VERIFIED,
