@@ -41,6 +41,9 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
     url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
 
     results = []
+    raw_total_seen = 0  # every posting seen, before keyword filtering —
+                         # used to tell "genuinely 0 matches" apart from
+                         # "likely reading the wrong tenant/site entirely"
     try:
         offset = 0
         for _ in range(max_pages):
@@ -52,9 +55,12 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
             }
             resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT)
             if resp.status_code != 200:
+                print(f"    [{source['name']}] Workday returned HTTP {resp.status_code} — "
+                      f"likely wrong tenant/site slug, not a real 'no jobs' result")
                 break
             data = resp.json()
             postings = data.get("jobPostings", [])
+            raw_total_seen += len(postings)
             if not postings:
                 break
             for posting in postings:
@@ -83,6 +89,13 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
             "confidence": Confidence.MANUAL_CHECK,
             "raw_subject": "",
         }]
+
+    if raw_total_seen == 0:
+        print(f"    [{source['name']}] saw 0 total postings (not just 0 keyword matches) — "
+              f"this strongly suggests the tenant/site URL is wrong, not that the company has zero openings")
+    else:
+        print(f"    [{source['name']}] saw {raw_total_seen} total open postings, {len(results)} matched keywords")
+
     return results[:max_results]
 
 
@@ -101,7 +114,8 @@ def fetch_smartrecruiters(source, max_results=50):
         if resp.status_code != 200:
             raise ValueError(f"status {resp.status_code}")
         data = resp.json()
-        for posting in data.get("content", []):
+        postings = data.get("content", [])
+        for posting in postings:
             title = posting.get("name", "")
             if not _keyword_hit(title):
                 continue
@@ -113,6 +127,11 @@ def fetch_smartrecruiters(source, max_results=50):
                 "confidence": Confidence.VERIFIED,
                 "raw_subject": title,
             })
+        if len(postings) == 0:
+            print(f"    [{source['name']}] saw 0 total postings (not just 0 keyword matches) — "
+                  f"this strongly suggests the company ID is wrong, not that the company has zero openings")
+        else:
+            print(f"    [{source['name']}] saw {len(postings)} total open postings, {len(results)} matched keywords")
     except Exception as e:
         return [{
             "title": f"(fetch failed — check {source['name']} careers site directly: {e})",
