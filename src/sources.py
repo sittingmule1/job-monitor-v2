@@ -170,17 +170,15 @@ ATS_SOURCES = [
         "platform": "workday",
         "tenant": "vhr-pbs",
         "site": "PBSCareers",
-        "host": "vhr-pbs.wd5.myworkdayjobs.com",
+        "host": "vhr-pbs.wd115.myworkdayjobs.com",
         "confidence": Confidence.VERIFIED,
     },
-    {
-        "name": "EchoStar",
-        "platform": "workday",
-        "tenant": "echostar",
-        "site": "echostar",
-        "host": "echostar.wd5.myworkdayjobs.com",
-        "confidence": Confidence.VERIFIED,
-    },
+    # EchoStar intentionally omitted: confirmed to run on Jibe
+    # (dish.jibeapply.com), not Workday as originally assumed. Needs a
+    # purpose-built Jibe fetcher, not a host/tenant tweak. Stays on the
+    # flag_only email path (see sources.py EMAIL_SOURCES) until that's
+    # built and verified — better an honest "check manually" than a
+    # fetcher confidently talking to the wrong system.
     {
         "name": "NBCUniversal",
         "platform": "smartrecruiters",

@@ -99,39 +99,58 @@ def fetch_workday(source, max_results=50, page_size=20, max_pages=10):
     return results[:max_results]
 
 
-def fetch_smartrecruiters(source, max_results=50):
+def fetch_smartrecruiters(source, max_results=50, page_size=100, max_pages=10):
     """
     SmartRecruiters has a genuinely public, documented posting API:
       https://api.smartrecruiters.com/v1/companies/{companyId}/postings
     No auth required for public postings.
+
+    Paginated rather than a single request — a company the size of
+    NBCUniversal almost certainly has more open postings than fit in one
+    page, and only checking page 1 risks missing a real keyword match that
+    happens to sit further down the list. Better to check everything once
+    than to falsely report "0 matches" from an incomplete view.
     """
     company_id = source["company_id"]
     url = f"https://api.smartrecruiters.com/v1/companies/{company_id}/postings"
 
     results = []
+    raw_total_seen = 0
     try:
-        resp = requests.get(url, params={"limit": 100}, timeout=REQUEST_TIMEOUT)
-        if resp.status_code != 200:
-            raise ValueError(f"status {resp.status_code}")
-        data = resp.json()
-        postings = data.get("content", [])
-        for posting in postings:
-            title = posting.get("name", "")
-            if not _keyword_hit(title):
-                continue
-            results.append({
-                "title": title,
-                "company": source["name"],
-                "link": posting.get("ref") or posting.get("applyUrl", ""),
-                "source": f"{source['name']} (SmartRecruiters, direct)",
-                "confidence": Confidence.VERIFIED,
-                "raw_subject": title,
-            })
-        if len(postings) == 0:
+        offset = 0
+        for _ in range(max_pages):
+            resp = requests.get(url, params={"limit": page_size, "offset": offset}, timeout=REQUEST_TIMEOUT)
+            if resp.status_code != 200:
+                print(f"    [{source['name']}] SmartRecruiters returned HTTP {resp.status_code} — "
+                      f"likely wrong company ID, not a real 'no jobs' result")
+                break
+            data = resp.json()
+            postings = data.get("content", [])
+            raw_total_seen += len(postings)
+            if not postings:
+                break
+            for posting in postings:
+                title = posting.get("name", "")
+                if not _keyword_hit(title):
+                    continue
+                results.append({
+                    "title": title,
+                    "company": source["name"],
+                    "link": posting.get("ref") or posting.get("applyUrl", ""),
+                    "source": f"{source['name']} (SmartRecruiters, direct)",
+                    "confidence": Confidence.VERIFIED,
+                    "raw_subject": title,
+                })
+            total_found = data.get("totalFound", 0)
+            offset += page_size
+            if offset >= total_found:
+                break
+
+        if raw_total_seen == 0:
             print(f"    [{source['name']}] saw 0 total postings (not just 0 keyword matches) — "
                   f"this strongly suggests the company ID is wrong, not that the company has zero openings")
         else:
-            print(f"    [{source['name']}] saw {len(postings)} total open postings, {len(results)} matched keywords")
+            print(f"    [{source['name']}] saw {raw_total_seen} total open postings (all pages), {len(results)} matched keywords")
     except Exception as e:
         return [{
             "title": f"(fetch failed — check {source['name']} careers site directly: {e})",
