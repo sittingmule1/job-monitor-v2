@@ -117,20 +117,30 @@ def ziprecruiter_subject(source_name, default_confidence, subject, sender, html_
 
 
 def lensa_body(source_name, default_confidence, subject, sender, html_body):
-    """Lensa emails list multiple postings in the HTML body. Structure has
-    shifted before, so every extraction is capped at BEST_EFFORT."""
+    """Lensa emails list multiple postings in the HTML body, each wrapped as
+    one large clickable block: company name, then job title, then salary,
+    then location, all as text inside a single <a> tag whose href points
+    through Lensa's own click-tracking redirect
+    (sg3email.lensa.com/ls/click?...) rather than a direct job URL.
+
+    Confirmed against a real Lensa email — the original assumption (looking
+    for '/job/' or '/l/' in the link) was wrong and matched nothing, which
+    is why every Lensa posting was previously falling through to manual-check
+    with no title extracted. Still capped at BEST_EFFORT since the block
+    structure (company on line 1, title on line 2) is inferred from one
+    sample, not guaranteed across every template Lensa might use."""
     records = []
     if not html_body:
         return [_base_record(source_name, Confidence.MANUAL_CHECK, subject)]
     soup = BeautifulSoup(html_body, "html.parser")
-    # Look for anchor tags that look like job links; Lensa job URLs contain '/job/'
-    links = [a for a in soup.find_all("a", href=True) if "/job/" in a["href"] or "/l/" in a["href"]]
-    for a in links[:20]:  # cap to avoid footer/nav noise
-        text = a.get_text(strip=True)
-        if not text or len(text) < 4:
+    links = [a for a in soup.find_all("a", href=True) if "lensa.com" in a["href"] and "click" in a["href"]]
+    for a in links[:20]:  # cap to avoid footer/nav/unsubscribe links
+        lines = [line.strip() for line in a.get_text(separator="\n").split("\n") if line.strip()]
+        if len(lines) < 2:
             continue
         rec = _base_record(source_name, Confidence.BEST_EFFORT, subject)
-        rec["title"] = text
+        rec["company"] = lines[0].rstrip("\u2022").strip()  # company line ends with a "•" separator
+        rec["title"] = lines[1]
         rec["link"] = a["href"]
         records.append(rec)
     if not records:
